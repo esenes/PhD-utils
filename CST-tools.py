@@ -86,11 +86,10 @@ def find_single_param(header, param_name, verbose=True):
     '''
     header = header[0] # flatten
     if header[:13]=='#Parameters =':
-        print(header) if verbose else None
+        verbose and print(header)
         for par in header.split('; '):
             if par[0:len(param_name)] == param_name:
-#                 return par
                 return float(par[len(param_name)+1:]) #+1 to skip the =
     else:
-        print('Parameter not found in the list')
-        return None
+        verbose and print('Parameter not found in the list')
+        return np.nan
