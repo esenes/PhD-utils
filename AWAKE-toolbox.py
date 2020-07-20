@@ -3,6 +3,48 @@ print('Please report bugs to eugenio.senes@cern.ch\nUse at your own risk.')
 import numpy as np
 import pandas as pnd
 import matplotlib.pyplot as plt
+import scipy.signal
+
+#---------------------------------------------------------------------
+############################# Units ##################################
+#---------------------------------------------------------------------
+
+def dBm2mW(dBm):
+    '''
+    dBm to mW conversion
+    '''
+    return 10**(dBm/10)
+
+def dBm2W(dBm):
+    '''
+    dBm to W conversion
+    '''
+    return 10**((dBm-30)/10)
+
+def mW2dBm(mW):
+    '''
+    mW to dBm conversion
+    '''
+    return  10. * (np.log10(mW))
+
+def W2dBm(W):
+    '''
+    W to dBm conversion
+    '''
+    return 30. + 10. * (np.log10(W))
+
+#---------------------------------------------------------------------
+############################# Math ###################################
+#---------------------------------------------------------------------
+
+def gaussian(x, A, mu, sigma, normalisation=False):
+    '''
+    Standard gaussian. If normalisation=True then A is ignored
+    '''
+    if normalisation:
+        A =  A=1./(sigma * np.sqrt(2*np.pi))
+    return A*np.exp(-0.5*((((x-mu)/sigma)**2)))
+
 
 #---------------------------------------------------------------------
 ################## Import LeCroy SDA18000 Scope ######################
@@ -35,7 +77,7 @@ def load_data_LeCroy(data_path, header_len=5):
 
 def load_data_Tektronix(data_path, header_len=9):
     '''
-    Import single file from the Tektronix MSO6 scope:
+    Import single file from the Tektronix MSO64 scope:
 
     Inputs:
     - data_path: the file including path
@@ -89,11 +131,79 @@ def doFFT(t, y):
 
     return f_fft, s_fft
 
+def doFFT_complex(t, y, reorder=False):
+    '''
+    Complex FFT. Use for the manual filtering routines.
+    If reorder=True then the spectrum is refolded correctly.
+
+    Inputs:
+    - t:       the timescale
+    - y:       the function value
+
+    Outputs:
+    - f_fft:        the frequncies
+    - s_fft:        the power spectrum
+
+    Last modified: 24.06.2019 by Eugenio Senes
+    '''
+    assert t.size == y.size, 'Different size in X and Y in the doFFT function'
+    dt = np.abs(t[1]-t[0])
+    N_sample = t.size
+
+    s_fft = np.fft.fft(y)
+    f_fft = np.fft.fftfreq(N_sample, d=dt)
+
+    # reorder the fft
+    if reorder:
+        f_fft = np.fft.fftshift(f_fft)
+        s_fft = np.fft.fftshift(s_fft)
+
+    return f_fft, s_fft
+
+
 def dB(x):
     return 20*np.log10(x)
 
+def zero_pad_linear_baseline(x, y, final_length=8*2048, interval=15, debug=False):
+    '''
+    Zero-pad a signal up to the final_length (overall length). The baseline
+    subtraction is done fitting the baseline in the first and last <interval>
+    points.
+
+    Inputs:
+    - x, y:         the signal
+    - final_length: the final length after the padding. Use powers of two for
+                    performance of the FFT later.
+    - interval:     number of points to consider at the beginning and end to fit
+                    the baseline
+    - debug:        if True, the function returns the points to fit the baseline
+                    and the function with the baseline subtracted
+
+    Outputs:
+    - x,y:          the signal after the zero padding
+
+    Last modified: 04.07.2019 by Eugenio Senes
+    '''
+
+    x_sampl = np.concatenate((x[:interval], x[-interval:]))
+    y_sampl = np.concatenate((y[:interval], y[-interval:]))
+
+    pol = np.polyfit(x_sampl, y_sampl,1)
+    yy_no_bline = y - (x*pol[0] + pol[1])
+
+    # zero padding
+    assert (final_length > len(x)) & (np.mod(final_length-len(x),2) == 0)
+    pad_len = final_length - len(x)
+    yy_zero_pad = np.concatenate((np.zeros(int(pad_len/2)), yy_no_bline, np.zeros(int(pad_len/2))))
+    dt = x[1]-x[0]
+    x_expanded = np.concatenate((np.linspace(x[0]-(pad_len/2)*dt, x[0]-dt, int(pad_len/2)), x, np.linspace(x[-1]+dt, x[-1]+(pad_len/2)*dt, int(pad_len/2))))
+
+    return [[x_sampl, y_sampl], [x, yy_no_bline], [x_expanded, yy_zero_pad]] if debug else [x_expanded, yy_zero_pad]
+
+
 #---------------------------------------------------------------------
 ################## Signal processing routines ########################
+#---> Peaks processing
 #---------------------------------------------------------------------
 
 def find_FWHM(x, y):
@@ -110,6 +220,10 @@ def find_FWHM(x, y):
     Finally, the location of the center peak is returned too.
 
     Test that everything is alright usign the test_FWHM function.
+
+    In case of error, e.g. if one of the two sides can not be found
+    because the profile sits on the edge of the data window, NaNs
+    are returned.
 
     Inputs:
     - x, y: input data, usually x is time and y intensity.
@@ -196,3 +310,88 @@ def test_FWHM(x, y):
     ax.legend()
 
     return None
+
+
+#---------------------------------------------------------------------
+################## Signal processing routines ########################
+#---> Data fitting
+#---------------------------------------------------------------------
+def fitlin(xdata, ydata, verbose=False):
+    '''
+    Do a linear fit of the data. Return the parameters and the errors on them.
+    Params are a*x + b.
+
+    Last modified: 29.10.2019 by Eugenio Senes
+    '''
+    from scipy.optimize import curve_fit
+    def model(x, a, b):
+        return (a*x) + b
+
+    p, cov = curve_fit(model, xdata, ydata)
+    s_p = np.sqrt(np.diag(cov))
+
+    if verbose:
+        #fit and plot fit
+        print('Model function: a*x + c')
+        print('Fit params: a=' + str(p[0]) + ' c= '+ str(p[1]))
+        print('Std params: s2_a=' + str(cov[0]) + ' s2_c= '+ str(cov[1]))
+
+    return p, s_p
+
+def fitlin_and_plot(xdata, ydata):
+    '''
+    Quick plot and linear fit of the data
+
+    Last modified: 29.10.2019 by Eugenio Senes
+    '''
+    from scipy.optimize import curve_fit
+    fig, ax = plt.subplots(1, dpi=150)
+    ax.plot(xdata, ydata,'.', label='Data')
+
+    popt, s_popt = fitlin(xdata, ydata)
+    ax.plot(xdata, popt[0]*xdata+popt[1], label='Fit')
+    ax.text(0.05, 0.25, 'Fit function: $a*x + b$:\n $a=$%.3E ± %.3E \n $c=$%.2E ± %.3E'
+        %(popt[0],s_popt[0],popt[1], s_popt[1]),
+        transform=ax.transAxes, fontsize=14,verticalalignment='top')
+    ax.legend(frameon=True)
+
+    return fig, ax
+
+
+
+#---------------------------------------------------------------------
+################## Signal processing routines ########################
+#---> Filtering
+#---------------------------------------------------------------------
+
+def design_cheby2(N, gstop, fstop, ts, print_filter=True):
+    '''
+    Design a Cheby2 filter, attenuating gstop dB at fstop.
+
+    Inputs:
+    - N:        filter order
+    - gstop:    attenuation at the stopband
+    - fstop:    frequency of the stopband
+    - ts:       sampling time
+
+    Outputs:
+    - a, b:     the filter polinomial coefficients
+
+    Last modified: 16.08.2019 by Eugenio Senes
+    '''
+    # filter designs
+    b, a = scipy.signal.cheby2(N, gstop, fstop*2*ts)
+
+    if print_filter:
+        w, h = scipy.signal.freqz(b,a)
+
+        fig, ax = plt.subplots(1)
+        ax.plot(1e-9*w/np.pi /(2*ts), 20 * np.log10(abs(h)), '-o', label='Cheby2')
+
+
+        ax.set_xlabel('Frequency (GHz)')
+        ax.grid()
+        ax.legend()
+        ax.axvline(x=fstop*1e-9)
+
+    return a, b

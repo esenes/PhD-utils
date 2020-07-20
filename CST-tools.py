@@ -15,13 +15,40 @@ def create_empty_dataframe(param_values, column_names):
     '''
     return pnd.DataFrame([[np.empty(0)]*len(column_names)]*len(param_values), index=param_values, columns=column_names)
 
+#---------------------------------------------------------------------
+######################## for ASCII files ############################
+#---------------------------------------------------------------------
+
+def read_CST_noheader(fname, columns, delimiter = '\t'):
+    '''
+    Read a CST ASCII output file generated with the 1D template
+    'ASCII export' so where there is no header. Returns a pandas
+    dataframe.
+
+    Inputs:
+    - fname:        filename, including path
+    - columns:      column names
+    - delimiter:    comment delimiter (default = #)
+
+    Outputs:
+    - dataframe:    dataframe containing the split file
+
+    Last modified: 12.03.2020 by Eugenio Senes
+    '''
+    return pnd.read_csv(fname, names=columns, delimiter=delimiter)
+
+
 
 #---------------------------------------------------------------------
 ##################### for PARAMETRIC RESULTS #########################
 #---------------------------------------------------------------------
 def read_CST_param_results(fname,delimiter = '#', verbose=True):
     '''
-    Read a CST ASCII output file from a parametric simulation
+    Read a CST ASCII output file from a parametric simulation.
+    This works for files with header, which are saved when you use
+    the export function from a plot. If you use the 1D template
+    'ASCII export' then you have no header, and you need to use
+    the function read_CST_noheader (see above).
 
     Inputs:
     - fname:        filename, including path
