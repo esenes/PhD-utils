@@ -45,6 +45,24 @@ def gaussian(x, A, mu, sigma, normalisation=False):
         A =  A=1./(sigma * np.sqrt(2*np.pi))
     return A*np.exp(-0.5*((((x-mu)/sigma)**2)))
 
+# Calculate the mean charge
+def weighted_average(x, sig_x):
+    '''
+    Calculate the aritmethical weighted average, usign the inverse variances weighting.
+    See https://en.wikipedia.org/wiki/Inverse-variance_weighting. 
+    
+    Returns mean and error on the mean
+    '''
+    x = np.array(x); sig_x = np.array(sig_x)
+    assert(all(sig_x>0))
+    
+    sig_x_m = 1./np.sum(1./(sig_x**2))
+    x_m = np.sum(x/(sig_x**2)) * sig_x_m
+    
+    return x_m, sig_x_m
+    
+    
+
 
 #---------------------------------------------------------------------
 ################## Import LeCroy SDA18000 Scope ######################
@@ -75,7 +93,7 @@ def load_data_LeCroy(data_path, header_len=5):
 ################## Import Tektronix MSO6 scope  ######################
 #---------------------------------------------------------------------
 
-def load_data_Tektronix(data_path, header_len=9):
+def load_data_Tektronix(data_path, header_len=9, new_firmware=True, **kwargs):
     '''
     Import single file from the Tektronix MSO64 scope:
 
@@ -87,14 +105,28 @@ def load_data_Tektronix(data_path, header_len=9):
     - data[1]: the signal of the trace
     - t_sampl: the sampling time
 
+    NEW FIRMWARE:
+    now all the data are stored in single file. Returns time, ch1, ch2, ...
+    adapts automatically to the number of channels
     '''
-    data = np.loadtxt(data_path, delimiter=',', skiprows=header_len)
-    data = data.transpose()
-    t_sampl = np.abs(data[0][1]-data[0][0])
-    N_sampl = data[1].size
-
-
-    return data[0], data[1], t_sampl
+    if new_firmware:
+        data = np.loadtxt(data_path, delimiter=',', skiprows=14, **kwargs)
+        data = data.transpose()
+        # switch depending on the number of channels
+        if data.shape[0] == 2:
+            return data[0], data[1]
+        elif data.shape[0] == 3:
+            return data[0], data[1], data[2]
+        elif data.shape[0] == 4:
+            return data[0], data[1], data[2], data[3]
+        elif data.shape[0] == 5:
+            return data[0], data[1], data[2], data[3], data[4]
+    else:
+        data = np.loadtxt(data_path, delimiter=',', skiprows=header_len)
+        data = data.transpose()
+        t_sampl = np.abs(data[0][1]-data[0][0])
+        N_sampl = data[1].size
+        return data[0], data[1], t_sampl
 
 
 #---------------------------------------------------------------------
